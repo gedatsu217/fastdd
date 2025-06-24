@@ -1,0 +1,13 @@
+[package]
+name = "fastdd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.40", features = ["derive"] }
+io-uring = "0.7.8"
+libc = "0.2.174"
+md5 = "0.7.0"
+rand = "0.9.1"
+tempfile = "3.20.0"
