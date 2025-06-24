@@ -115,14 +115,8 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
     };
     let mut cur_blocks = 0;
     let num_blocks = if total_size % bs == 0 {total_size / bs} else {total_size / bs + 1};
-    let mut to_reads: VecDeque<(u64, u64)> = VecDeque::new(); // offset & size
-    for ioffset in (ibase..ibase + total_size).step_by(bs as usize) {
-        let remaining = ibase + total_size - ioffset;
-        let rsize = bs.min(remaining);
-        to_reads.push_back((ioffset, rsize));
-    }
-
-    assert_eq!(to_reads.len() as u64, num_blocks);
+    let mut cur_bytes = 0;
+    let mut to_reads: VecDeque<(u64, u64)> = VecDeque::new(); // offset & size. Used for reading remaining data
 
     let max_buf_size = match get_memlock_limit() {
         Some(limit) => limit,
@@ -161,11 +155,24 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
 
     // main loop
     while cur_blocks < num_blocks {
-        while !free_bufs.is_empty() && !to_reads.is_empty() {
+        while !free_bufs.is_empty() && (!to_reads.is_empty() || cur_bytes < total_size) {
             if uring.submission().is_full() {
                 uring.submit()?;
             }
-            let (roffset, rsize) = to_reads.pop_front().unwrap();
+            let (roffset, rsize);
+            if !to_reads.is_empty() {
+                (roffset, rsize) = to_reads.pop_front().unwrap();
+            } else if cur_bytes < total_size {
+                roffset = ibase + cur_bytes;
+                rsize = bs.min(total_size - cur_bytes);
+                cur_bytes += rsize;
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "No more data to read",
+                ));
+            }
+
             let buf_idx = free_bufs.pop_front().unwrap();
             let buf = &mut bufs[buf_idx as usize];
             let user_data = buf_idx << 1 | TAG_READ;
