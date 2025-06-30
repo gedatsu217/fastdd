@@ -5,6 +5,8 @@ use std::os::fd::AsRawFd;
 use std::collections::VecDeque;
 use libc::iovec;
 use libc::{rlimit, getrlimit, RLIMIT_MEMLOCK};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering, AtomicBool}};
+use std::io::{Write};
 
 const TAG_READ: u64 = 0;
 const TAG_WRITE: u64 = 1;
@@ -44,6 +46,10 @@ pub struct Args {
     /// Number of buffers to use. If not specified, a default number will be used.
     #[arg(short, long)]
     num_buffers: Option<u64>,
+
+    /// Show progress during the operation
+    #[arg(long, default_value_t = false)]
+    progress: bool,
     
 }
 
@@ -56,6 +62,7 @@ pub struct ArgData {
     pub oseek: u64,
     pub ring_size: u32,
     pub num_buffers: u64,
+    pub progress: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,6 +101,16 @@ fn get_memlock_limit() -> Option<u64> {
     } else {
         None
     }
+}
+
+fn print_status(cur_bytes: u64, total_size: u64) {
+    if total_size > 0 {
+        let percent = (cur_bytes as f64 / total_size as f64) * 100.0;
+        eprint!("\rProgress: {:.2}%", percent);
+    } else {
+        eprint!("\rProgress: N/A");
+    }
+    std::io::stdout().flush().unwrap();
 }
 
 pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
@@ -152,6 +169,22 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
         uring.submitter().register_buffers(&iovecs)?;
         uring.submitter().register_files(&fds)?;
     }
+
+    let status_byte_count = Arc::new(AtomicU64::new(0));
+    let status_byte_count_clone = Arc::clone(&status_byte_count);
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_flag_clone = Arc::clone(&stop_flag);
+    let handle = if !arg_data.progress {
+        None
+    } else {
+        Some(std::thread::spawn(move || {
+            while !stop_flag_clone.load(Ordering::Relaxed) {
+                let bytes_copied = status_byte_count_clone.load(Ordering::Relaxed);
+                print_status(bytes_copied, total_size);
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }))
+    };
 
     // main loop
     while cur_blocks < num_blocks {
@@ -244,6 +277,7 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
                 }
                 let res = res as u64;
                 let write_metadata = &metadata[buf_idx as usize * 2 + 1];
+                status_byte_count.fetch_add(res, Ordering::Relaxed);
                 if res != write_metadata.size {
                     assert!(res < write_metadata.size);
                     let woffset = write_metadata.offset + res;
@@ -284,6 +318,11 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
     
     uring.submitter().unregister_buffers()?;
     uring.submitter().unregister_files()?;
+    stop_flag.store(true, Ordering::Relaxed);
+    if let Some(handle) = handle {
+        handle.join().expect("Failed to join progress thread");
+        eprintln!("\rProgress: 100.00% done");
+    }
     
     Ok(total_size)
 }
@@ -328,5 +367,6 @@ pub fn arg_parse() -> ArgData {
         oseek: args.output_seek,
         ring_size: ring_size,
         num_buffers: num_buffers,
+        progress: args.progress,
     }
 }

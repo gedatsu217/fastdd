@@ -19,6 +19,7 @@ fn copy_random_5m() -> anyhow::Result<()> {
         oseek: 0,
         ring_size: 256,
         num_buffers: 128,
+        progress: false,
     };
 
     let result = fastdd::execute_dd(&argdata);
