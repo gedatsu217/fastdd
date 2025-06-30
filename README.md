@@ -31,4 +31,5 @@ fastdd --if [input_file] --of [output_file]
 --os: Output file seek offset in blocks.
 --ring_size: Size of the io_uring ring. If not specified, a default size will be used.
 --num_buffers: Number of buffers to use. If not specified, a default number will be used.
+--progress: Display periodic progress updates.
 ```
