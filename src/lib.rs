@@ -124,10 +124,12 @@ pub fn execute_dd(arg_data: &ArgData) -> std::io::Result<u64> {
     let mut free_bufs: VecDeque<u64> = (0..num_buffers).collect();
     let default_metadata = RWMetadata { offset: 0, size: 0 };
     let mut metadata = vec![default_metadata; (num_buffers * 2) as usize];
+    let file_len = ifile.metadata()?.len().checked_sub(ibase)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Invalid input seek offset"))?;
     let total_size = match arg_data.count {
-        Some(c) => c * bs,
+        Some(c) => file_len.min(c * bs),
         None => {
-            ifile.metadata()?.len()
+            file_len
         }
     };
     let mut cur_blocks = 0;
